@@ -1,0 +1,703 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Motor de Juego 3D con Hand Tracking y WebXR</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            user-select: none;
+        }
+        body, html {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #000;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: #fff;
+        }
+        #canvas-container {
+            width: 100%;
+            height: 100%;
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 1;
+        }
+        /* Interfaz de Usuario 2D sobrepuesta */
+        .hud {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 10;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 20px;
+        }
+        .top-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 15px 25px;
+            border-radius: 12px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .stat-box {
+            font-size: 1.2rem;
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .stat-value {
+            color: #00ffcc;
+            font-size: 1.5rem;
+        }
+        /* Pantallas de Menú */
+        .overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(10, 10, 20, 0.85);
+            backdrop-filter: blur(15px);
+            z-index: 20;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            pointer-events: auto;
+            transition: opacity 0.3s ease;
+        }
+        .hidden {
+            display: none !important;
+        }
+        h1 {
+            font-size: 3rem;
+            margin-bottom: 10px;
+            background: linear-gradient(45deg, #00ffcc, #0077ff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        p {
+            font-size: 1.1rem;
+            max-width: 600px;
+            margin-bottom: 20px;
+            color: #ccc;
+            line-height: 1.5;
+        }
+        .btn {
+            background: linear-gradient(45deg, #0077ff, #00ffcc);
+            border: none;
+            color: #000;
+            padding: 15px 35px;
+            font-size: 1.2rem;
+            font-weight: bold;
+            border-radius: 30px;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            margin: 10px;
+        }
+        .btn:hover {
+            transform: scale(1.05);
+            box-shadow: 0 0 20px rgba(0, 255, 204, 0.6);
+        }
+        .instructions {
+            background: rgba(255, 255, 255, 0.05);
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 25px;
+            text-align: left;
+        }
+        .instructions li {
+            margin-bottom: 8px;
+        }
+        /* Botón WebXR en el menú */
+        #vr-button-container {
+            margin-top: 15px;
+        }
+    </style>
+
+    <!-- Importación de librerías mediante CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/webxr/VRButton.js"></script>
+</head>
+<body>
+
+    <div id="canvas-container"></div>
+
+    <!-- Interfaz en juego (HUD) -->
+    <div class="hud">
+        <div class="top-bar">
+            <div class="stat-box">Puntos: <span id="score-val" class="stat-value">0</span></div>
+            <div class="stat-box">Nivel: <span id="level-val" class="stat-value">1</span></div>
+            <div class="stat-box">Vidas: <span id="lives-val" class="stat-value">3</span></div>
+            <div class="stat-box">Tiempo: <span id="time-val" class="stat-value">60</span>s</div>
+        </div>
+    </div>
+
+    <!-- Menú Principal -->
+    <div id="main-menu" class="overlay">
+        <h1>GEOMETRY XR HANDS</h1>
+        <p>Experiencia inmersiva 3D con Seguimiento de Manos (WebXR) o Modo Escritorio.</p>
+        <div class="instructions">
+            <h3>¿Cómo Jugar?</h3>
+            <ul>
+                <li>🖐️ <b>Con Manos VR/AR:</b> Toca o pellizca (junta índice y pulgar) para destruir objetivos rojos/amarillos y atrapar gemas verdes.</li>
+                <li>🖱️ <b>Modo PC (Mouse):</b> Mueve la cámara arrastrando el mouse. Haz clic sobre los objetos para interactuar.</li>
+                <li>🎯 <b>Objetivo:</b> Consigue la mayor puntuación destruyendo objetivos antes de que expire el tiempo o pierdas tus vidas.</li>
+            </ul>
+        </div>
+        <button id="start-btn" class="btn">Iniciar Juego (Modo PC/Pantalla)</button>
+        <div id="vr-button-container"></div>
+    </div>
+
+    <!-- Pantalla de Juego Terminado -->
+    <div id="game-over-menu" class="overlay hidden">
+        <h1 id="game-over-title">JUEGO TERMINADO</h1>
+        <p>Tu puntuación final fue: <span id="final-score" style="color:#00ffcc; font-weight:bold;">0</span></p>
+        <button id="restart-btn" class="btn">Volver a Jugar</button>
+    </div>
+
+    <script>
+        /**
+         * CONFIGURACIÓN GLOBAL DEL JUEGO (Fácilmente modificable para cambiar la temática)
+         */
+        const GAME_CONFIG = {
+            duration: 60,            // Tiempo de juego por nivel en segundos
+            initialLives: 3,         // Vidas iniciales
+            spawnInterval: 1200,     // Frecuencia de aparición de objetos (ms)
+            maxObjects: 15,          // Máximo de objetos simultáneos en escena
+            spawnRadius: 8,          // Distancia de generación 360° desde el usuario
+            types: {
+                TARGET: { color: 0xff3366, points: 100, damage: 0, speed: 0.02, scale: 0.6 },
+                BONUS:  { color: 0x00ffcc, points: 250, damage: 0, speed: 0.03, scale: 0.4 },
+                HAZARD: { color: 0xffaa00, points: -50, damage: 1, speed: 0.015, scale: 0.7 }
+            }
+        };
+
+        /**
+         * ESTADO DEL JUEGO
+         */
+        let gameState = {
+            score: 0,
+            lives: GAME_CONFIG.initialLives,
+            level: 1,
+            timeRemaining: GAME_CONFIG.duration,
+            isPlaying: false,
+            spawnTimer: null,
+            clockInterval: null
+        };
+
+        // Variables de Three.js y WebXR
+        let scene, camera, renderer;
+        let interactiveObjects = [];
+        let raycaster, mouse;
+        let controller1, controller2;
+        let hand1, hand2;
+        let audioCtx;
+
+        /**
+         * INICIALIZACIÓN DE LA APLICACIÓN
+         */
+        function init() {
+            const container = document.getElementById('canvas-container');
+
+            // 1. Crear Escena
+            scene = new THREE.Scene();
+            scene.fog = new THREE.FogExp2(0x0a0a14, 0.03);
+
+            // 2. Crear Cámara
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 1.6, 0); // Altura promedio de ojos humanos (1.6m)
+
+            // 3. Renderizador WebGL habilitado para WebXR
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.xr.enabled = true;
+            container.appendChild(renderer.domElement);
+
+            // Añadir botón VR integrado de Three.js
+            document.getElementById('vr-button-container').appendChild(VRButton.createButton(renderer));
+
+            // 4. Iluminación
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambientLight);
+
+            const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            dirLight.position.set(5, 10, 7);
+            scene.add(dirLight);
+
+            // 5. Entorno 360° (Entorno espacial/futurista)
+            buildEnvironment();
+
+            // 6. Configuración de Controles WebXR (Seguimiento de Manos y Raycasting)
+            setupXRControllers();
+
+            // 7. Configuración de Control para PC (Mouse/Teclado)
+            raycaster = new THREE.Raycaster();
+            mouse = new THREE.Vector2();
+            window.addEventListener('pointerdown', onPointerDown);
+            window.addEventListener('resize', onWindowResize);
+
+            // 8. Eventos de la Interfaz
+            document.getElementById('start-btn').addEventListener('click', startGame);
+            document.getElementById('restart-btn').addEventListener('click', startGame);
+
+            // Inicializar Web Audio API para efectos de sonido
+            initAudio();
+
+            // Bucle Principal de Renderizado
+            renderer.setAnimationLoop(render);
+        }
+
+        /**
+         * CONSTRUCCIÓN DEL ENTORNO DE 360°
+         */
+        function buildEnvironment() {
+            // Fondo estrellado de 360°
+            const starsGeometry = new THREE.BufferGeometry();
+            const starsCount = 2000;
+            const starPositions = new Float32Array(starsCount * 3);
+
+            for (let i = 0; i < starsCount * 3; i++) {
+                starPositions[i] = (Math.random() - 0.5) * 100;
+            }
+            starsGeometry.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
+            
+            const starsMaterial = new THREE.PointsMaterial({ color: 0x8888ff, size: 0.1 });
+            const starField = new THREE.Points(starsGeometry, starsMaterial);
+            scene.add(starField);
+
+            // Malla de Suelo Futurista
+            const gridHelper = new THREE.GridHelper(40, 40, 0x00ffcc, 0x004466);
+            gridHelper.position.y = 0;
+            scene.add(gridHelper);
+        }
+
+        /**
+         * CONFIGURACIÓN DE SEGUIMIENTO DE MANOS Y MANIFESTACIÓN DE MANOS EN VR/AR
+         */
+        function setupXRControllers() {
+            // Controlador / Mano 1
+            controller1 = renderer.xr.getController(0);
+            controller1.addEventListener('selectstart', onXRSelect);
+            scene.add(controller1);
+
+            // Controlador / Mano 2
+            controller2 = renderer.xr.getController(1);
+            controller2.addEventListener('selectstart', onXRSelect);
+            scene.add(controller2);
+
+            // Visualización de Rayos para apuntar con la mano
+            const rayGeometry = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -5)]);
+            const rayMaterial = new THREE.LineBasicMaterial({ color: 0x00ffcc });
+            
+            const line1 = new THREE.Line(rayGeometry, rayMaterial);
+            controller1.add(line1);
+            const line2 = new THREE.Line(rayGeometry, rayMaterial);
+            controller2.add(line2);
+
+            // Modelos de Manos (WebXR Hand Input API)
+            const handModelFactory = {
+                createHandModel: (controller) => {
+                    const group = new THREE.Group();
+                    // Crear una esfera visual para la palma / punto de contacto de la mano
+                    const palmGeom = new THREE.SphereGeometry(0.04, 16, 16);
+                    const palmMat = new THREE.MeshBasicMaterial({ color: 0x00ffcc, wireframe: true });
+                    const palmMesh = new THREE.Mesh(palmGeom, palmMat);
+                    group.add(palmMesh);
+                    return group;
+                }
+            };
+
+            hand1 = renderer.xr.getHand(0);
+            hand1.add(handModelFactory.createHandModel(hand1));
+            scene.add(hand1);
+
+            hand2 = renderer.xr.getHand(1);
+            hand2.add(handModelFactory.createHandModel(hand2));
+            scene.add(hand2);
+        }
+
+        /**
+         * SISTEMA DE SONIDO CON SINTETIZADOR WEB AUDIO (Sin necesidad de archivos externos)
+         */
+        function initAudio() {
+            const AudioContext = window.AudioContext || window.webkitAudioContext;
+            if (AudioContext) audioCtx = new AudioContext();
+        }
+
+        function playSound(type) {
+            if (!audioCtx) return;
+            
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+
+            const now = audioCtx.currentTime;
+
+            if (type === 'hit') {
+                // Sonido agudo al golpear objetivo correcto
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(600, now);
+                osc.frequency.exponentialRampToValueAtTime(1200, now + 0.1);
+                gain.gain.setValueAtTime(0.3, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+                osc.start(now);
+                osc.stop(now + 0.1);
+            } else if (type === 'damage') {
+                // Sonido grave al cometer un error
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(150, now);
+                osc.frequency.linearRampToValueAtTime(40, now + 0.25);
+                gain.gain.setValueAtTime(0.4, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.25);
+                osc.start(now);
+                osc.stop(now + 0.25);
+            }
+        }
+
+        /**
+         * LÓGICA Y REGLAS DEL JUEGO
+         */
+        function startGame() {
+            // Reiniciar Estado
+            gameState.score = 0;
+            gameState.lives = GAME_CONFIG.initialLives;
+            gameState.level = 1;
+            gameState.timeRemaining = GAME_CONFIG.duration;
+            gameState.isPlaying = true;
+
+            // Limpiar Objetos Anteriores
+            interactiveObjects.forEach(obj => scene.remove(obj.mesh));
+            interactiveObjects = [];
+
+            // Actualizar Interfaz
+            updateHUD();
+            document.getElementById('main-menu').classList.add('hidden');
+            document.getElementById('game-over-menu').classList.add('hidden');
+
+            // Iniciar Audio Context si estaba suspendido
+            if (audioCtx && audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+
+            // Temporizadores
+            clearInterval(gameState.spawnTimer);
+            clearInterval(gameState.clockInterval);
+
+            gameState.spawnTimer = setInterval(spawnObject, GAME_CONFIG.spawnInterval);
+            gameState.clockInterval = setInterval(updateClock, 1000);
+        }
+
+        function updateClock() {
+            if (!gameState.isPlaying) return;
+            
+            gameState.timeRemaining--;
+            document.getElementById('time-val').textContent = gameState.timeRemaining;
+
+            if (gameState.timeRemaining <= 0) {
+                endGame(true);
+            }
+        }
+
+        function updateHUD() {
+            document.getElementById('score-val').textContent = gameState.score;
+            document.getElementById('level-val').textContent = gameState.level;
+            document.getElementById('lives-val').textContent = gameState.lives;
+        }
+
+        /**
+         * GENERACIÓN DINÁMICA DE OBJETOS EN 360°
+         */
+        function spawnObject() {
+            if (!gameState.isPlaying || interactiveObjects.length >= GAME_CONFIG.maxObjects) return;
+
+            // Selección aleatoria del tipo de objeto
+            const rand = Math.random();
+            let configType = GAME_CONFIG.types.TARGET;
+            let typeName = 'TARGET';
+
+            if (rand > 0.7) {
+                configType = GAME_CONFIG.types.BONUS;
+                typeName = 'BONUS';
+            } else if (rand > 0.45) {
+                configType = GAME_CONFIG.types.HAZARD;
+                typeName = 'HAZARD';
+            }
+
+            // Geometría según tipo
+            let geometry;
+            if (typeName === 'BONUS') {
+                geometry = new THREE.OctahedronGeometry(configType.scale);
+            } else if (typeName === 'HAZARD') {
+                geometry = new THREE.DodecahedronGeometry(configType.scale);
+            } else {
+                geometry = new THREE.IcosahedronGeometry(configType.scale);
+            }
+
+            const material = new THREE.MeshStandardMaterial({
+                color: configType.color,
+                roughness: 0.3,
+                metalness: 0.8,
+                emissive: configType.color,
+                emissiveIntensity: 0.2
+            });
+
+            const mesh = new THREE.Mesh(geometry, material);
+
+            // Posición aleatoria alrededor del jugador en 360°
+            const angle = Math.random() * Math.PI * 2;
+            const height = 0.5 + Math.random() * 2.5; // Altura alcanzable con la mano
+            const distance = GAME_CONFIG.spawnRadius;
+
+            mesh.position.set(
+                Math.sin(angle) * distance,
+                height,
+                Math.cos(angle) * distance
+            );
+
+            // Dirección hacia el centro (jugador)
+            const targetPos = new THREE.Vector3(0, 1.6, 0);
+            const direction = new THREE.Vector3().subVectors(targetPos, mesh.position).normalize();
+
+            scene.add(mesh);
+
+            interactiveObjects.push({
+                mesh: mesh,
+                type: typeName,
+                data: configType,
+                direction: direction,
+                rotSpeed: { x: Math.random() * 0.04, y: Math.random() * 0.04 }
+            });
+        }
+
+        /**
+         * INTERACCIÓN Y DETECCIÓN DE GESTOS / COLISIONES
+         */
+        // Interacción desde Pantalla / Mouse (Escritorio)
+        function onPointerDown(event) {
+            if (!gameState.isPlaying) return;
+
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(interactiveObjects.map(o => o.mesh));
+
+            if (intersects.length > 0) {
+                const hitMesh = intersects[0].object;
+                processHit(hitMesh);
+            }
+        }
+
+        // Interacción desde WebXR Hand Tracking / Controles
+        function onXRSelect(event) {
+            if (!gameState.isPlaying) return;
+
+            const controller = event.target;
+            const tempMatrix = new THREE.Matrix4();
+            tempMatrix.identity().extractRotation(controller.matrixWorld);
+
+            raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
+            raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
+
+            const intersects = raycaster.intersectObjects(interactiveObjects.map(o => o.mesh));
+
+            if (intersects.length > 0) {
+                const hitMesh = intersects[0].object;
+                processHit(hitMesh);
+            }
+        }
+
+        // Detección directa por proximidad física (Tocar objetos con las manos)
+        function checkHandCollisions() {
+            const hands = [hand1, hand2];
+
+            hands.forEach(hand => {
+                if (hand && hand.visible) {
+                    const palm = hand.children[0];
+                    if (!palm) return;
+
+                    const palmPos = new THREE.Vector3();
+                    palm.getWorldPosition(palmPos);
+
+                    interactiveObjects.forEach(obj => {
+                        const dist = palmPos.distanceTo(obj.mesh.position);
+                        if (dist < 0.5) { // Distancia de toque
+                            processHit(obj.mesh);
+                        }
+                    });
+                }
+            });
+        }
+
+        /**
+         * PROCESAMIENTO DE IMPACTO / INTERACCIÓN
+         */
+        function processHit(mesh) {
+            const index = interactiveObjects.findIndex(o => o.mesh === mesh);
+            if (index === -1) return;
+
+            const obj = interactiveObjects[index];
+
+            // Aplicar Reglas
+            gameState.score += obj.data.points;
+            if (gameState.score < 0) gameState.score = 0;
+
+            if (obj.data.damage > 0) {
+                gameState.lives -= obj.data.damage;
+                playSound('damage');
+                createExplosion(obj.mesh.position, 0xffaa00);
+            } else {
+                playSound('hit');
+                createExplosion(obj.mesh.position, obj.data.color);
+            }
+
+            // Dificultad Progresiva: Subir nivel cada 500 puntos
+            gameState.level = Math.floor(gameState.score / 500) + 1;
+
+            updateHUD();
+
+            // Eliminar de la escena
+            scene.remove(obj.mesh);
+            interactiveObjects.splice(index, 1);
+
+            // Verificar derrota
+            if (gameState.lives <= 0) {
+                endGame(false);
+            }
+        }
+
+        /**
+         * SISTEMA DE PARTÍCULAS / RETROALIMENTACIÓN VISUAL
+         */
+        function createExplosion(position, color) {
+            const particleCount = 15;
+            const geom = new THREE.BufferGeometry();
+            const positions = [];
+            const velocities = [];
+
+            for (let i = 0; i < particleCount; i++) {
+                positions.push(position.x, position.y, position.z);
+                velocities.push(
+                    (Math.random() - 0.5) * 0.2,
+                    (Math.random() - 0.5) * 0.2,
+                    (Math.random() - 0.5) * 0.2
+                );
+            }
+
+            geom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+            const mat = new THREE.PointsMaterial({ color: color, size: 0.1, transparent: true, opacity: 1 });
+            const pSystem = new THREE.Points(geom, mat);
+            
+            scene.add(pSystem);
+
+            // Animación de desvanecimiento
+            let frame = 0;
+            function animateParticles() {
+                frame++;
+                const posArr = pSystem.geometry.attributes.position.array;
+
+                for (let i = 0; i < particleCount; i++) {
+                    posArr[i * 3] += velocities[i * 3];
+                    posArr[i * 3 + 1] += velocities[i * 3 + 1];
+                    posArr[i * 3 + 2] += velocities[i * 3 + 2];
+                }
+
+                pSystem.geometry.attributes.position.needsUpdate = true;
+                pSystem.material.opacity -= 0.03;
+
+                if (frame < 30) {
+                    requestAnimationFrame(animateParticles);
+                } else {
+                    scene.remove(pSystem);
+                }
+            }
+            animateParticles();
+        }
+
+        /**
+         * FIN DEL JUEGO
+         */
+        function endGame(victory) {
+            gameState.isPlaying = false;
+            clearInterval(gameState.spawnTimer);
+            clearInterval(gameState.clockInterval);
+
+            const title = document.getElementById('game-over-title');
+            title.textContent = victory ? "¡TIEMPO COMPLETADO!" : "¡JUEGO TERMINADO!";
+            title.style.background = victory ? "linear-gradient(45deg, #00ffcc, #0077ff)" : "linear-gradient(45deg, #ff3366, #ffaa00)";
+            
+            document.getElementById('final-score').textContent = gameState.score;
+            document.getElementById('game-over-menu').classList.remove('hidden');
+        }
+
+        /**
+         * ADAPTACIÓN DE VENTANA
+         */
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        /**
+         * BUCLE PRINCIPAL DE ANIMACIÓN
+         */
+        function render(time, frame) {
+            // Si el juego está activo, actualizar posiciones de objetos
+            if (gameState.isPlaying) {
+                // Comprobar colisiones por toque directo con las manos en VR
+                if (renderer.xr.isPresenting) {
+                    checkHandCollisions();
+                }
+
+                // Mover objetos hacia el jugador
+                for (let i = interactiveObjects.length - 1; i >= 0; i--) {
+                    const obj = interactiveObjects[i];
+
+                    // Movimiento y rotación
+                    obj.mesh.position.addScaledVector(obj.direction, obj.data.speed * (1 + gameState.level * 0.1));
+                    obj.mesh.rotation.x += obj.rotSpeed.x;
+                    obj.mesh.rotation.y += obj.rotSpeed.y;
+
+                    // Si el objeto llega muy cerca del usuario sin ser destruido
+                    if (obj.mesh.position.distanceTo(new THREE.Vector3(0, 1.6, 0)) < 1.0) {
+                        if (obj.type !== 'HAZARD') {
+                            gameState.lives--;
+                            playSound('damage');
+                            updateHUD();
+                        }
+                        scene.remove(obj.mesh);
+                        interactiveObjects.splice(i, 1);
+
+                        if (gameState.lives <= 0) {
+                            endGame(false);
+                        }
+                    }
+                }
+            }
+
+            // Renderizar Escena
+            renderer.render(scene, camera);
+        }
+
+        // Ejecutar inicialización al cargar la página
+        window.onload = init;
+    </script>
+</body>
+</html>
